@@ -9,6 +9,26 @@ gi.require_version('GLib', '2.0')
 gi.require_version('GObject', '2.0')
 from gi.repository import GLib, GObject, Gst
 
+
+
+def timeout_cb(data):
+    pipe,mixer = data
+
+    print(pipe)
+    print(mixer)
+
+    sinkpad2 = mixer.get_request_pad('sink_%u')
+    buzzer2 = Gst.ElementFactory.make('audiotestsrc', 'buzzer2')
+    buzzer2.set_property('freq',1000)
+    pipe.add(buzzer2)
+
+    buzzersrc2 = buzzer2.get_static_pad('src')
+    buzzersrc2.link(sinkpad2)
+
+    buzzer2.sync_state_with_parent()
+
+    return True
+
 def bus_call(bus, message, loop):
     t = message.type
     print(message)
@@ -57,6 +77,12 @@ def main(args):
     bus.connect ("message", bus_call, loop)
 
     pipe.set_state(Gst.State.PLAYING)
+
+
+
+    GLib.timeout_add_seconds(10, timeout_cb, (pipe,mixer))
+
+
     try:
       loop.run()
     except:

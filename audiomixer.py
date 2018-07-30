@@ -11,11 +11,8 @@ from gi.repository import GLib, GObject, Gst
 
 
 
-def timeout_cb(data):
+def add_source(data):
     pipe,mixer = data
-
-    print(pipe)
-    print(mixer)
 
     sinkpad2 = mixer.get_request_pad('sink_%u')
     buzzer2 = Gst.ElementFactory.make('audiotestsrc', 'buzzer2')
@@ -78,10 +75,7 @@ def main(args):
 
     pipe.set_state(Gst.State.PLAYING)
 
-
-
-    GLib.timeout_add_seconds(10, timeout_cb, (pipe,mixer))
-
+    GLib.timeout_add_seconds(3, add_source, (pipe,mixer))
 
     try:
       loop.run()

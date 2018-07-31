@@ -13,6 +13,54 @@ GObject.threads_init()
 Gst.init(None)
 
 
+class AudioRtmpSource(Gst.Bin):
+
+    pass
+    
+
+class AudiofileSource(Gst.Bin):
+    
+    def __init__(self, filename, volume=0.5, outcaps=None):
+        Gst.Bin.__init__(self)
+        self.filename = filename
+        
+        if outcaps is None:
+            self.outcaps = Gst.caps_from_string('audio/x-raw-int,channels=2,rate=44100,depth=16')
+        else:
+            self.outcaps = outcaps
+
+        self.filesrc = Gst.ElementFactory.make('filesrc')
+        self.filesrc.set_property('location', self.filename)
+
+        self.dbin = Gst.ElementFactory.make('decodebin')
+        self.ident = Gst.ElementFactory.make('identity')
+        self.audioconvert = Gst.ElementFactory.make('audioconvert')
+        self.volume = Gst.ElementFactory.make('volume')
+        self.volume.set_property('volume', volume)
+
+        # Join them together...
+        self.add(self.filesrc, self.dbin, self.ident,
+                      self.audioconvert, self.volume)
+
+        self.filesrc.link(self.dbin)
+        self.audioconvert.link(self.volume)
+        self.volume.link(self.ident, self.outcaps)
+
+        srcpad = Gst.GhostPad('src', self.ident.get_pad('src'))
+        self.add_pad(srcpad)
+
+        self.dbin.connect('new-decoded-pad', self._new_decoded_pad_cb)
+
+    def _new_decoded_pad_cb(self, dbin, pad, is_last):
+        '''
+        Callback for decodebin linking
+        '''
+        print(pad.get_caps().to_string())
+        if not 'audio' in pad.get_caps().to_string():
+            return
+        pad.link(self.audioconvert.get_pad('sink'))
+
+
 class AudioSource:
 
     def __init__(self, freq, name):
@@ -105,7 +153,7 @@ class AudioMixer:
             loop.quit()
         return True
 
-        
+
 
 def add_source(data):
     pipe,mixer = data

@@ -13,8 +13,62 @@ GObject.threads_init()
 Gst.init(None)
 
 
-class AudioRtmpSource(Gst.Bin):
-    pass
+class RTMPSource(Gst.Bin):
+
+
+    def __init__(self, rtmpUrl, volume=1.0, outcaps=None):
+        Gst.Bin.__init__(self)
+
+
+        # need set by add_source
+        self.linked_sink = None
+        self.mixer = None
+
+        self.rtmpUrl = rtmpUrl
+        
+        if outcaps is None:
+            self.outcaps = Gst.caps_from_string('audio/x-raw,channels=2,rate=44100')
+        else:
+            self.outcaps = outcaps
+
+        self.rtmpsrc = Gst.ElementFactory.make('rtmpsrc')
+        self.rtmpsrc.set_property('location', self.rtmpUrl)
+        self.rtmpsrc.set_property('timeout', 10)
+
+        self.dbin = Gst.ElementFactory.make('decodebin')
+        self.dbin.set_property('caps', self.outcaps)
+
+        self.audioconvert = Gst.ElementFactory.make('audioconvert')
+        self.volume = Gst.ElementFactory.make('volume')
+        self.volume.set_property('volume', volume)
+        self.ident = Gst.ElementFactory.make('identity')
+       
+
+        self.add(self.rtmpsrc)
+        self.add(self.dbin)
+        self.add(self.audioconvert)
+        self.add(self.volume)
+        self.add(self.ident)
+
+        self.rtmpsrc.link(self.dbin)
+        self.audioconvert.link(self.volume)
+        self.volume.link(self.ident)
+
+        srcpad = Gst.GhostPad.new('src', self.ident.get_static_pad('src'))
+        self.add_pad(srcpad)
+
+        self.dbin.connect('pad-added', self._new_decoded_pad_cb)
+
+
+    def _new_decoded_pad_cb(self, dbin, pad):
+
+        caps = pad.query_caps(None)
+        print(caps)
+        structure_name = caps.to_string()
+        print(structure_name)
+
+        pad.link(self.audioconvert.get_static_pad('sink'))
+
 
 
 class AudiofileSource(Gst.Bin):
@@ -47,7 +101,6 @@ class AudiofileSource(Gst.Bin):
         self.add(self.audioconvert)
         self.add(self.volume)
         self.add(self.ident)
-        
 
         self.filesrc.link(self.dbin)
         self.audioconvert.link(self.volume)
@@ -60,9 +113,6 @@ class AudiofileSource(Gst.Bin):
 
 
     def _new_decoded_pad_cb(self, dbin, pad):
-        '''
-        Callback for decodebin linking
-        '''
 
         # print('=============',pad.get_pad_template_caps())
         # if not 'audio' in pad.get_pad_template_caps().to_string():
@@ -289,10 +339,18 @@ def test_mixer():
 
     # mixer.add_source(src2)
 
-    src1 = AudiofileSource('output.mp4')
+    # src1 = AudiofileSource('output.mp4')
+    # mixer.add_source(src1)
+
+    # src2 = AudiofileSource('output2.mp4')
+    # mixer.add_source(src2)
+
+    src1 = RTMPSource('rtmp://localhost/live/src1')
+
     mixer.add_source(src1)
 
-    src2 = AudiofileSource('output2.mp4')
+    src2 = RTMPSource('rtmp://localhost/live/src2')
+
     mixer.add_source(src2)
 
     mixer.start()

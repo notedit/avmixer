@@ -14,18 +14,19 @@ Gst.init(None)
 
 
 class AudioRtmpSource(Gst.Bin):
-
     pass
-    
+
 
 class AudiofileSource(Gst.Bin):
     
     def __init__(self, filename, volume=0.5, outcaps=None):
         Gst.Bin.__init__(self)
         self.filename = filename
+
+        self.linked_sink = None
         
         if outcaps is None:
-            self.outcaps = Gst.caps_from_string('audio/x-raw-int,channels=2,rate=44100,depth=16')
+            self.outcaps = Gst.caps_from_string('audio/x-raw,channels=2,rate=44100')
         else:
             self.outcaps = outcaps
 
@@ -38,27 +39,53 @@ class AudiofileSource(Gst.Bin):
         self.volume = Gst.ElementFactory.make('volume')
         self.volume.set_property('volume', volume)
 
-        # Join them together...
-        self.add(self.filesrc, self.dbin, self.ident,
-                      self.audioconvert, self.volume)
+        self.dbin.set_property('caps', self.outcaps)
+
+
+        self.add(self.filesrc)
+        self.add(self.dbin)
+        self.add(self.audioconvert)
+        self.add(self.volume)
+        self.add(self.ident)
+        
 
         self.filesrc.link(self.dbin)
         self.audioconvert.link(self.volume)
-        self.volume.link(self.ident, self.outcaps)
+        self.volume.link(self.ident)
 
-        srcpad = Gst.GhostPad('src', self.ident.get_pad('src'))
+        srcpad = Gst.GhostPad.new('src', self.ident.get_static_pad('src'))
         self.add_pad(srcpad)
 
-        self.dbin.connect('new-decoded-pad', self._new_decoded_pad_cb)
+        self.dbin.connect('pad-added', self._new_decoded_pad_cb)
 
-    def _new_decoded_pad_cb(self, dbin, pad, is_last):
+
+    def _new_decoded_pad_cb(self, dbin, pad):
         '''
         Callback for decodebin linking
         '''
-        print(pad.get_caps().to_string())
-        if not 'audio' in pad.get_caps().to_string():
-            return
-        pad.link(self.audioconvert.get_pad('sink'))
+
+        # print('=============',pad.get_pad_template_caps())
+        # if not 'audio' in pad.get_pad_template_caps().to_string():
+        #     return
+        # pad.link(self.audioconvert.get_pad('sink'))
+
+        caps = pad.query_caps(None)
+        print(caps)
+        structure_name = caps.to_string()
+        print(structure_name)
+
+        pad.link(self.audioconvert.get_static_pad('sink'))
+
+        # if structure_name.startswith('audio'):
+        #     if not pad.is_linked():
+        #         pad.link(self.audioconvert.get_static_pad('sink'))
+
+        # if structure_name.startswith('video'):
+        #     if not pad.is_linked():
+        #         pad.link(self.fakev.get_static_pad('sink'))
+
+
+GObject.type_register(AudiofileSource)
 
 
 class AudioSource:
@@ -101,17 +128,18 @@ class AudioMixer:
 
     def add_source(self, source):
 
+        self.pipe.add(source)
+
         sink_pad = self.mixer.get_request_pad('sink_%u')
 
-        src_pad  = source.src.get_static_pad('src')
 
-        self.pipe.add(source.src)
-        
+        src_pad  = source.get_static_pad('src')
+
         src_pad.link(sink_pad)
         
-        source.sink_pad = sink_pad
+        source.linked_sink = sink_pad
         
-        source.src.sync_state_with_parent()
+        source.sync_state_with_parent()
 
         self.sources.append(source)
 
@@ -122,13 +150,13 @@ class AudioMixer:
         if not source in self.sources:
             return 
 
-        src_pad = source.src.get_static_pad('src')
+        src_pad = source.get_static_pad('src')
 
-        source.src.set_state(Gst.State.NULL)
+        source.set_state(Gst.State.NULL)
 
-        src_pad.unlink(source.sink_pad)
+        src_pad.unlink(source.linked_sink)
 
-        self.mixer.release_request_pad(source.sink_pad)
+        self.mixer.release_request_pad(source.linked_sink)
 
         self.sources.remove(source)
 
@@ -144,6 +172,7 @@ class AudioMixer:
 
     def _bus_call(self, bus, message, loop):
         t = message.type
+        print(message.type)
         if t == Gst.MessageType.EOS:
             print('End-of-stream')
             loop.quit()
@@ -242,24 +271,33 @@ def remove_source(data):
 
     return True
 
+
+
+
+
 def test_mixer():
 
     loop = GObject.MainLoop()
 
     mixer = AudioMixer(loop)
 
-    src1 = AudioSource(500, 'src1')
+    # src1 = AudioSource(500, 'src1')
 
+    # mixer.add_source(src1)
+
+    # src2 = AudioSource(1000, 'src2')
+
+    # mixer.add_source(src2)
+
+    src1 = AudiofileSource('output.mp4')
     mixer.add_source(src1)
 
-
-    src2 = AudioSource(1000, 'src2')
-
+    src2 = AudiofileSource('output2.mp4')
     mixer.add_source(src2)
 
     mixer.start()
 
-    GLib.timeout_add_seconds(5, remove_source, (src2, mixer))
+    #GLib.timeout_add_seconds(5, remove_source, (src2, mixer))
 
     loop.run()
 

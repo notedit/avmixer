@@ -15,7 +15,6 @@ Gst.init(None)
 
 class RTMPSource(Gst.Bin):
 
-
     def __init__(self, rtmpUrl, volume=1.0, outcaps=None):
         Gst.Bin.__init__(self)
 
@@ -25,7 +24,7 @@ class RTMPSource(Gst.Bin):
         self.mixer = None
 
         self.rtmpUrl = rtmpUrl
-        
+
         if outcaps is None:
             self.outcaps = Gst.caps_from_string('audio/x-raw,channels=2,rate=44100')
         else:
@@ -42,7 +41,7 @@ class RTMPSource(Gst.Bin):
         self.volume = Gst.ElementFactory.make('volume')
         self.volume.set_property('volume', volume)
         self.ident = Gst.ElementFactory.make('identity')
-       
+
 
         self.add(self.rtmpsrc)
         self.add(self.dbin)
@@ -72,13 +71,13 @@ class RTMPSource(Gst.Bin):
 
 
 class AudiofileSource(Gst.Bin):
-    
+
     def __init__(self, filename, volume=0.5, outcaps=None):
         Gst.Bin.__init__(self)
         self.filename = filename
 
         self.linked_sink = None
-        
+
         if outcaps is None:
             self.outcaps = Gst.caps_from_string('audio/x-raw,channels=2,rate=44100')
         else:
@@ -109,10 +108,25 @@ class AudiofileSource(Gst.Bin):
         srcpad = Gst.GhostPad.new('src', self.ident.get_static_pad('src'))
         self.add_pad(srcpad)
 
-        self.dbin.connect('pad-added', self._new_decoded_pad_cb)
+        self.dbin.connect('pad-added', self._new_decoded_pad)
+
+        bus = self.get_bus()
+        bus.add_signal_watch()
+        bus.connect ('message', self._bus_call,None)
 
 
-    def _new_decoded_pad_cb(self, dbin, pad):
+    def _bus_call(self, bus, message, data):
+        t = message.type
+        if t == Gst.MessageType.EOS:
+            print(self, 'End-of-stream')
+        elif t == Gst.MessageType.ERROR:
+            err, debug = message.parse_error()
+            print('Error: %s: %s\n' % (err, debug))
+
+        return True
+
+
+    def _new_decoded_pad(self, dbin, pad):
 
         # print('=============',pad.get_pad_template_caps())
         # if not 'audio' in pad.get_pad_template_caps().to_string():
@@ -135,18 +149,21 @@ class AudiofileSource(Gst.Bin):
         #         pad.link(self.fakev.get_static_pad('sink'))
 
 
+
 GObject.type_register(AudiofileSource)
 
 
-class AudioSource:
 
-    def __init__(self, freq, name):
 
-        self.src = Gst.ElementFactory.make('audiotestsrc', name)
-        self.src.set_property('freq',freq)
-        self.name = name
-        self.linked_pad = None
-
+def create_encoding_profile():
+    container = GstPbutils.EncodingContainerProfile.new('matroska', None, Gst.Caps.new_empty_simple('video/x-matroska'), None)
+    # h264
+    video = GstPbutils.EncodingVideoProfile.new(Gst.Caps.new_empty_simple('video/x-h264'), None, None, 0)
+    # aac
+    audio = GstPbutils.EncodingAudioProfile.new(Gst.Caps.from_string('audio/mpeg, mpegversion=4'), None, None, 0)
+    container.add_profile(video)
+    container.add_profile(audio)
+    return container
 
 class AudioMixer:
 
@@ -160,9 +177,21 @@ class AudioMixer:
         pipe.add(audioconvert)
         mixer.link(audioconvert)
 
-        output = Gst.ElementFactory.make('autoaudiosink', 'audio_out')
+
+
+        wavenc = Gst.ElementFactory.make('wavenc')
+        output = Gst.ElementFactory.make('filesink')
+        output.set_property('location', 'test.wav')
+
+        #output = Gst.ElementFactory.make('autoaudiosink', 'audio_out')
+
+        pipe.add(wavenc)
         pipe.add(output)
-        audioconvert.link(output)
+        
+        audioconvert.link(wavenc)
+        wavenc.link(output)
+
+    
 
         self.loop = loop
         self.pipe = pipe
@@ -186,9 +215,9 @@ class AudioMixer:
         src_pad  = source.get_static_pad('src')
 
         src_pad.link(sink_pad)
-        
+
         source.linked_sink = sink_pad
-        
+
         source.sync_state_with_parent()
 
         self.sources.append(source)
@@ -198,7 +227,7 @@ class AudioMixer:
     def remove_source(self, source):
 
         if not source in self.sources:
-            return 
+            return
 
         src_pad = source.get_static_pad('src')
 
@@ -233,88 +262,10 @@ class AudioMixer:
         return True
 
 
-
-def add_source(data):
-    pipe,mixer = data
-
-    src2 = Gst.ElementFactory.make('audiotestsrc', 'src2')
-    src2.set_property('freq',1000)
-
-    sink = mixer.get_request_pad('sink_%u')
-
-    pipe.add(src2)
-
-    src2pad = src2.get_static_pad('src')
-    src2pad.link(sink)
-
-    buzzer2.sync_state_with_parent()
-
-    return True
-
-def bus_call(bus, message, loop):
-    t = message.type
-    print(message)
-    if t == Gst.MessageType.EOS:
-        sys.stdout.write("End-of-stream\n")
-        loop.quit()
-    elif t == Gst.MessageType.ERROR:
-        err, debug = message.parse_error()
-        sys.stderr.write("Error: %s: %s\n" % (err, debug))
-        loop.quit()
-    return True
-
-
-
-def main(args):
-
-    pipe = Gst.Pipeline.new('mixer')
-    mixer = Gst.ElementFactory.make('audiomixer')
-
-    pipe.add(mixer)
-
-    sinkpad1 = mixer.get_request_pad('sink_%u')
-
-    # todo add some other sinkpad
-
-    buzzer1 = Gst.ElementFactory.make('audiotestsrc', 'buzzer1')
-    buzzer1.set_property('freq',500)
-
-    pipe.add(buzzer1)
-
-    buzzersrc1 = buzzer1.get_static_pad('src')
-    buzzersrc1.link(sinkpad1)
-
-    audioconvert  = Gst.ElementFactory.make('audioconvert','audioconvert')
-    pipe.add(audioconvert)
-    mixer.link(audioconvert)
-
-    output = Gst.ElementFactory.make('autoaudiosink', 'audio_out')
-    pipe.add(output)
-    audioconvert.link(output)
-
-    loop = GObject.MainLoop()
-
-    bus = pipe.get_bus()
-    bus.add_signal_watch()
-    bus.connect ("message", bus_call, loop)
-
-    pipe.set_state(Gst.State.PLAYING)
-
-    GLib.timeout_add_seconds(3, add_source, (pipe,mixer))
-
-    try:
-      loop.run()
-    except:
-      pass
-
-    # cleanup
-    pipe.set_state(Gst.State.NULL)
-
-
 def remove_source(data):
 
     print('remove_source')
-    
+
     src2,mixer = data
 
     mixer.remove_source(src2)
@@ -330,20 +281,6 @@ def test_mixer():
     loop = GObject.MainLoop()
 
     mixer = AudioMixer(loop)
-
-    # src1 = AudioSource(500, 'src1')
-
-    # mixer.add_source(src1)
-
-    # src2 = AudioSource(1000, 'src2')
-
-    # mixer.add_source(src2)
-
-    # src1 = AudiofileSource('output.mp4')
-    # mixer.add_source(src1)
-
-    # src2 = AudiofileSource('output2.mp4')
-    # mixer.add_source(src2)
 
     src1 = RTMPSource('rtmp://localhost/live/src1')
 

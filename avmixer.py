@@ -12,9 +12,9 @@ gi.require_version('GstPbutils', '1.0')
 from gi.repository import GLib, GObject, Gst, GstPbutils
 
 
-
 GObject.threads_init()
 Gst.init(None)
+Gst.debug_set_active(True)
 
 
 class RTMPSource(Gst.Bin):
@@ -72,101 +72,89 @@ class RTMPSource(Gst.Bin):
         pad.link(self.audioconvert.get_static_pad('sink'))
 
 
+
+
 class FileSource(Gst.Bin):
 
-    def __init__(self, filename, volume=0.5, outcaps=None):
+    def __init__(self, filename, volume=0.5):
         Gst.Bin.__init__(self)
         self.filename = filename
 
-         # need set by add_source
-        self.linked_sink = None
-        self.mixer = None
-
-        if outcaps is None:
-            self.outcaps = Gst.caps_from_string('audio/x-raw,channels=2,rate=44100')
-        else:
-            self.outcaps = outcaps
+        # need set by add_source
+        self.linked_audio_sink = None
+        self.linked_video_sink = None
 
         self.filesrc = Gst.ElementFactory.make('filesrc')
         self.filesrc.set_property('location', self.filename)
 
         self.dbin = Gst.ElementFactory.make('decodebin')
-        self.ident = Gst.ElementFactory.make('identity')
         self.audioconvert = Gst.ElementFactory.make('audioconvert')
+        self.videoconvert = Gst.ElementFactory.make('videoconvert')
+        self.audioident = Gst.ElementFactory.make('identity')
+        self.videoident = Gst.ElementFactory.make('identity')
+
         self.volume = Gst.ElementFactory.make('volume')
         self.volume.set_property('volume', volume)
-
-        self.dbin.set_property('caps', self.outcaps)
 
 
         self.add(self.filesrc)
         self.add(self.dbin)
         self.add(self.audioconvert)
+        self.add(self.videoconvert)
         self.add(self.volume)
-        self.add(self.ident)
+        self.add(self.audioident)
+        self.add(self.videoident)
+
 
         self.filesrc.link(self.dbin)
         self.audioconvert.link(self.volume)
-        self.volume.link(self.ident)
+        self.volume.link(self.audioident)
 
-        srcpad = Gst.GhostPad.new('src', self.ident.get_static_pad('src'))
-        self.add_pad(srcpad)
+        self.videoconvert.link(self.videoident)
+
+        audio_srcpad = Gst.GhostPad.new('audio_src', self.audioident.get_static_pad('src'))
+        self.add_pad(audio_srcpad)
+
+        video_srcpad = Gst.GhostPad.new('video_src', self.videoident.get_static_pad('src'))
+        self.add_pad(video_srcpad)
 
         self.dbin.connect('pad-added', self._new_decoded_pad)
-
-  
 
 
     def _new_decoded_pad(self, dbin, pad):
 
-        # print('=============',pad.get_pad_template_caps())
-        # if not 'audio' in pad.get_pad_template_caps().to_string():
-        #     return
-        # pad.link(self.audioconvert.get_pad('sink'))
-
         caps = pad.query_caps(None)
-        print(caps)
         structure_name = caps.to_string()
+
         print(structure_name)
 
-        pad.link(self.audioconvert.get_static_pad('sink'))
+        if structure_name.startswith('audio'):
+            if not pad.is_linked():
+                pad.link(self.audioconvert.get_static_pad('sink'))
+            print(self,'link audio sink==========')
 
-        # if structure_name.startswith('audio'):
-        #     if not pad.is_linked():
-        #         pad.link(self.audioconvert.get_static_pad('sink'))
-
-        # if structure_name.startswith('video'):
-        #     if not pad.is_linked():
-        #         pad.link(self.fakev.get_static_pad('sink'))
-
-
+        if structure_name.startswith('video'):
+            if not pad.is_linked():
+                pad.link(self.videoconvert.get_static_pad('sink'))
+            print(self,'link video sink=============')
 
 GObject.type_register(FileSource)
 
 
-class AudioMixer:
+
+class AVMixer:
 
     def __init__(self, loop):
+        self.pipe = Gst.Pipeline.new('mixer')
 
-        pipe = Gst.Pipeline.new('mixer')
-        mixer = Gst.ElementFactory.make('audiomixer')
-        pipe.add(mixer)
+        self._setup_mixer()
 
-        self.loop = loop
-        self.pipe = pipe
-        self.mixer = mixer
-
-        audioconvert  = Gst.ElementFactory.make('audioconvert','audioconvert')
-        pipe.add(audioconvert)
-        mixer.link(audioconvert)
-        
-        self._setup_filesink(audioconvert)
+        self._setup_sink()
 
         self.sources = []
 
         bus = pipe.get_bus()
         bus.add_signal_watch()
-
         bus.connect ('message', self._bus_call, loop)
 
 
@@ -174,13 +162,19 @@ class AudioMixer:
 
         self.pipe.add(source)
 
-        sink_pad = self.mixer.get_request_pad('sink_%u')
+        audio_src_pad  = source.get_static_pad('audio_src')
 
-        src_pad  = source.get_static_pad('src')
+        if audio_src_pad:
+            audio_sink_pad = self.audiomixer.get_request_pad('sink_%u')
+            audio_src_pad.link(audio_sink_pad)
+            source.linked_audio_sink = audio_sink_pad
 
-        src_pad.link(sink_pad)
+        video_src_pad = source.get_static_pad('video_src')
 
-        source.linked_sink = sink_pad
+        if video_src_pad:
+            video_sink_pad = self.videomixer.get_request_pad('sink_%u')
+            video_src_pad.link(video_sink_pad)
+            source.linked_video_sink = video_sink_pad
 
         source.sync_state_with_parent()
 
@@ -192,13 +186,18 @@ class AudioMixer:
         if not source in self.sources:
             return
 
-        src_pad = source.get_static_pad('src')
-
         source.set_state(Gst.State.NULL)
+        audio_src_pad  = source.get_static_pad('audio_src')
 
-        src_pad.unlink(source.linked_sink)
+        if audio_src_pad and source.linked_audio_sink:
+            audio_src_pad.unlink(source.linked_audio_sink)
+            self.audiomixer.release_request_pad(source.linked_audio_sink)
 
-        self.mixer.release_request_pad(source.linked_sink)
+        video_src_pad = source.get_static_pad('video_src')
+
+        if video_src_pad and source.linked_video_sink:
+            video_src_pad.unlink(source.linked_video_sink)
+            self.videomixer.release_request_pad(source.linked_video_sink)
 
         self.sources.remove(source)
 
@@ -210,6 +209,15 @@ class AudioMixer:
     def stop(self):
         self.pipe.set_state(Gst.State.NULL)
         self.loop.quit()
+
+
+    def _setup_mixer(self):
+
+        self.videomixer = Gst.ElementFactory.make('videomixer')
+        self.pipe.add(self.videomixer)
+
+        self.audiomixer = Gst.ElementFactory.make('audiomixer')
+        self.pipe.add(self.audiomixer)
 
     def _setup_audio_file_sink(self, audioconvert):
 
@@ -223,7 +231,16 @@ class AudioMixer:
         audioconvert.link(wavenc)
         wavenc.link(output)
 
-    def _setup_filesink(self, audioconvert):
+
+    def _setup_sink(self):
+
+        audioconvert = Gst.ElementFactory.make('audioconvert')
+        self.pipe.add(audioconvert)
+        self.audiomixer.link(audioconvert)
+
+        videoconvert = Gst.ElementFactory.make('videoconvert')
+        self.pipe.add(videoconvert)
+        self.videomixer.link(videoconvert)
 
         encodebin = Gst.ElementFactory.make('encodebin')
 
@@ -239,12 +256,13 @@ class AudioMixer:
         encodebin.link(filesink)
 
         audio_sink_pad =  encodebin.get_request_pad('audio_%u')
-
         audio_src_pad = audioconvert.get_static_pad('src')
-
         audio_src_pad.link(audio_sink_pad)
 
-    
+        video_sink_pad = encodebin.get_request_pad('video_%u')
+        video_src_pad = videoconvert.get_static_pad('src')
+        video_src_pad.link(video_sink_pad)
+
 
     def _bus_call(self, bus, message, loop):
         t = message.type
@@ -275,7 +293,6 @@ class AudioMixer:
         return container
 
 
-
 def remove_source(data):
 
     print('remove_source')
@@ -287,14 +304,11 @@ def remove_source(data):
     return True
 
 
-
-
-
 def test_mixer():
 
     loop = GObject.MainLoop()
 
-    mixer = AudioMixer(loop)
+    mixer = AVMixer(loop)
 
     # src1 = RTMPSource('rtmp://localhost/live/src1')
 

@@ -176,7 +176,6 @@ class AudioMixer:
 
         sink_pad = self.mixer.get_request_pad('sink_%u')
 
-
         src_pad  = source.get_static_pad('src')
 
         src_pad.link(sink_pad)
@@ -245,6 +244,7 @@ class AudioMixer:
 
         audio_src_pad.link(audio_sink_pad)
 
+    
 
     def _bus_call(self, bus, message, loop):
         t = message.type

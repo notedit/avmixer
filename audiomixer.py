@@ -7,7 +7,10 @@ import gi
 gi.require_version('Gst', '1.0')
 gi.require_version('GLib', '2.0')
 gi.require_version('GObject', '2.0')
-from gi.repository import GLib, GObject, Gst
+gi.require_version('GstPbutils', '1.0')
+from gi.repository import GLib, GObject, Gst, GstPbutils
+
+
 
 GObject.threads_init()
 Gst.init(None)
@@ -17,7 +20,6 @@ class RTMPSource(Gst.Bin):
 
     def __init__(self, rtmpUrl, volume=1.0, outcaps=None):
         Gst.Bin.__init__(self)
-
 
         # need set by add_source
         self.linked_sink = None
@@ -56,10 +58,26 @@ class RTMPSource(Gst.Bin):
         srcpad = Gst.GhostPad.new('src', self.ident.get_static_pad('src'))
         self.add_pad(srcpad)
 
-        self.dbin.connect('pad-added', self._new_decoded_pad_cb)
+
+        self.dbin.connect('pad-added', self._new_decoded_pad)
+
+        bus = self.get_bus()
+        bus.add_signal_watch()
+        bus.connect ('message', self._bus_call,None)
 
 
-    def _new_decoded_pad_cb(self, dbin, pad):
+    def _bus_call(self, bus, message, data):
+        t = message.type
+        # todo  we should remove source when there is a EOS 
+        if t == Gst.MessageType.EOS:
+            print(self, 'End-of-stream')
+        elif t == Gst.MessageType.ERROR:
+            err, debug = message.parse_error()
+            print('Error: %s: %s\n' % (err, debug))
+
+        return True
+
+    def _new_decoded_pad(self, dbin, pad):
 
         caps = pad.query_caps(None)
         print(caps)
@@ -69,8 +87,7 @@ class RTMPSource(Gst.Bin):
         pad.link(self.audioconvert.get_static_pad('sink'))
 
 
-
-class AudiofileSource(Gst.Bin):
+class FileSource(Gst.Bin):
 
     def __init__(self, filename, volume=0.5, outcaps=None):
         Gst.Bin.__init__(self)
@@ -148,22 +165,10 @@ class AudiofileSource(Gst.Bin):
         #     if not pad.is_linked():
         #         pad.link(self.fakev.get_static_pad('sink'))
 
+        
 
+GObject.type_register(FileSource)
 
-GObject.type_register(AudiofileSource)
-
-
-
-
-def create_encoding_profile():
-    container = GstPbutils.EncodingContainerProfile.new('matroska', None, Gst.Caps.new_empty_simple('video/x-matroska'), None)
-    # h264
-    video = GstPbutils.EncodingVideoProfile.new(Gst.Caps.new_empty_simple('video/x-h264'), None, None, 0)
-    # aac
-    audio = GstPbutils.EncodingAudioProfile.new(Gst.Caps.from_string('audio/mpeg, mpegversion=4'), None, None, 0)
-    container.add_profile(video)
-    container.add_profile(audio)
-    return container
 
 class AudioMixer:
 
@@ -187,7 +192,7 @@ class AudioMixer:
 
         pipe.add(wavenc)
         pipe.add(output)
-        
+
         audioconvert.link(wavenc)
         wavenc.link(output)
 
@@ -260,6 +265,23 @@ class AudioMixer:
             print('Error: %s: %s\n' % (err, debug))
             loop.quit()
         return True
+
+
+    def _create_encoding_profile(self):
+        container = GstPbutils.EncodingContainerProfile.new('matroska', None, 
+                            Gst.Caps.new_empty_simple('video/x-matroska'), None)
+        # h264
+        video = GstPbutils.EncodingVideoProfile.new(
+                        Gst.Caps.new_empty_simple('video/x-h264'),
+                        None, None, 0)
+        # aac
+        audio = GstPbutils.EncodingAudioProfile.new(
+                        Gst.Caps.from_string('audio/mpeg, mpegversion=4'), 
+                        None, None, 0)
+        container.add_profile(video)
+        container.add_profile(audio)
+        return container
+
 
 
 def remove_source(data):

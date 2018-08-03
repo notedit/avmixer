@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-
+import random
 import time 
 import sys
 
@@ -76,7 +76,7 @@ class RTMPSource(Gst.Bin):
 
 class FileSource(Gst.Bin):
 
-    def __init__(self, filename, volume=0.5):
+    def __init__(self, filename, volume=1.0):
         Gst.Bin.__init__(self)
         self.filename = filename
 
@@ -153,7 +153,7 @@ class AVMixer:
 
         self.sources = []
 
-        bus = pipe.get_bus()
+        bus = self.pipe.get_bus()
         bus.add_signal_watch()
         bus.connect ('message', self._bus_call, loop)
 
@@ -173,6 +173,8 @@ class AVMixer:
 
         if video_src_pad:
             video_sink_pad = self.videomixer.get_request_pad('sink_%u')
+            print(video_sink_pad)
+            print(video_sink_pad.set_property('ypos', len(self.sources) * 300))
             video_src_pad.link(video_sink_pad)
             source.linked_video_sink = video_sink_pad
 

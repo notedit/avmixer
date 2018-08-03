@@ -73,6 +73,8 @@ class RTMPSource(Gst.Bin):
 
 
 
+GObject.type_register(RTMPSource)
+
 
 class FileSource(Gst.Bin):
 

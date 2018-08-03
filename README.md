@@ -1,2 +1,2 @@
-# audiomixer
-audiomixer based on gstreamer
+# avmixer
+audio video mixer based on gstreamer

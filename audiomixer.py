@@ -61,7 +61,7 @@ class RTMPSource(Gst.Bin):
 
         self.dbin.connect('pad-added', self._new_decoded_pad)
 
-        
+
     def _new_decoded_pad(self, dbin, pad):
 
         caps = pad.query_caps(None)
@@ -160,7 +160,7 @@ class AudioMixer:
         pipe.add(audioconvert)
         mixer.link(audioconvert)
         
-        self._setup_audio_file_sink(audioconvert)
+        self._setup_filesink(audioconvert)
 
         self.sources = []
 
@@ -227,8 +227,11 @@ class AudioMixer:
     def _setup_filesink(self, audioconvert):
 
         encodebin = Gst.ElementFactory.make('encodebin')
-        filesink = Gst.ElementFactory.make('filesink')
 
+        profile = self._create_encoding_profile()
+        encodebin.set_property('profile', profile)
+
+        filesink = Gst.ElementFactory.make('filesink')
         filesink.set_property('location', str(time.time()) + '.mkv')
 
         self.pipe.add(encodebin)
